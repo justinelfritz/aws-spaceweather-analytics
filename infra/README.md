@@ -4,11 +4,11 @@ CDK (Python) app for the Space Weather Analytics platform.
 
 ## Stacks
 
-- `SpaceWeather-Storage-<stage>` — S3 raw/curated buckets, Timestream, Glue catalog
+- `SpaceWeather-Storage-<stage>` — S3 raw/curated buckets, Glue catalog
 - `SpaceWeather-Ingestion-<stage>` — ingestion Lambdas, EventBridge schedules, DLQ
 - `SpaceWeather-Sea-<stage>` — superposed epoch analysis pipeline
 - `SpaceWeather-Ml-<stage>` — forecasting pipeline (SageMaker)
-- `SpaceWeather-Api-<stage>` — API Gateway (REST + WebSocket), Cognito
+- `SpaceWeather-Api-<stage>` — API Gateway (REST), Cognito
 - `SpaceWeather-Frontend-<stage>` — S3 + CloudFront hosting for the dashboard
 
 `<stage>` defaults to `dev`; pass `-c stage=prod` to target prod.

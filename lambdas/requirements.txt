@@ -1,0 +1,3 @@
+# Deployed Lambda dependencies. Currently empty on purpose: handler.py only
+# uses the standard library plus boto3, and boto3 ships with the AWS Lambda
+# Python runtime already, so no packages need to be bundled into the asset.

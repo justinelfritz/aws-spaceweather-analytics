@@ -7,7 +7,7 @@ A living checklist for building the real-time dashboard, ML forecasting pipeline
 ## 0. Project setup & planning
 
 - [x] Define scope for v1 — decide which data feeds are in scope for launch (recommend starting with just Kp index + solar wind plasma/mag, add X-ray flux later)
-- [x] Pick the storm/CME event catalog you'll use for SEA — NOAA SWPC geomagnetic storm list
+- [x] Pick the storm/CME event catalog you'll use for SEA — pivoted from "NOAA SWPC geomagnetic storm list" to the NASA DONKI GST API (`kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/GST`): SWPC doesn't actually publish a discrete storm catalog, only raw index time series, so DONKI's pre-curated NOAA-sourced event list is used instead — see `docs/data-sources.md`
 - [x] Set up GitHub repo with a clear structure: `/infra` (CDK), `/lambdas`, `/ml`, `/sea`, `/frontend`, `/docs`
 - [ ] Write a short README with the architecture diagram and elevator pitch (useful for portfolio reviewers from day one) — elevator pitch done, architecture diagram still needed
 - [x] Set up a personal AWS account (or dedicated sub-account) separate from any work/production accounts
@@ -32,29 +32,29 @@ A living checklist for building the real-time dashboard, ML forecasting pipeline
 
 ## 3. Data ingestion
 
-- [ ] Confirm exact NOAA SWPC / NASA OMNIWeb endpoints and response formats for each feed
-- [ ] Write ingestion Lambda(s): fetch, parse, validate, normalize units/timestamps
-- [ ] Add retry logic with exponential backoff for upstream API calls
-- [ ] Define idempotent write keys (timestamp + source) to avoid duplicate records on re-processing
-- [ ] Create EventBridge rules per feed with appropriate schedule (e.g., `rate(2 minutes)` for Kp index)
-- [ ] Set up an SQS dead-letter queue for failed ingestion records
-- [ ] Add a CloudWatch alarm on DLQ depth
-- [ ] Write unit tests for the parsing/validation logic using saved sample API responses
-- [ ] Handle upstream schema drift gracefully (log + alert rather than crash)
+- [x] Confirm exact NOAA SWPC / NASA OMNIWeb endpoints and response formats for each feed — see `docs/data-sources.md` (live-verified endpoints, schemas, and per-feed cadence)
+- [x] Write ingestion Lambda(s): fetch, parse, validate, normalize units/timestamps — single Lambda covering all 4 live SWPC feeds, `lambdas/ingestion/handler.py`
+- [x] Add retry logic with exponential backoff for upstream API calls — `fetch_json()`, 3 attempts
+- [x] Define idempotent write keys (timestamp + source) to avoid duplicate records on re-processing — `raw_key()`, keyed by feed + ingestion minute
+- [x] Create EventBridge rules per feed with appropriate schedule (e.g., `rate(2 minutes)` for Kp index) — one shared `rate(2 minutes)` rule (see cadence table in `docs/data-sources.md` for why one schedule covers all 4 live feeds)
+- [x] Set up an SQS dead-letter queue for failed ingestion records — wired to the schedule's Lambda target, `infra/stacks/ingestion_stack.py`
+- [x] Add a CloudWatch alarm on DLQ depth — notifies via SNS email subscription
+- [x] Write unit tests for the parsing/validation logic using saved sample API responses — `lambdas/ingestion/tests/`, fixtures captured live from each endpoint
+- [x] Handle upstream schema drift gracefully (log + alert rather than crash) — per-feed `validate()` checks required fields; one feed failing doesn't block the others, but still trips the DLQ so it's visible
 
 ## 4. Storage
 
-- [ ] Create S3 buckets: raw landing zone, curated Parquet layer
-- [ ] Define S3 partitioning scheme (e.g., `source/year/month/day/`)
-- [ ] Set up S3 lifecycle policies (transition raw data to Infrequent Access/Glacier after 30–90 days)
-- [ ] Create Timestream database + table(s) for the hot, query-facing time series
-- [ ] Configure Timestream memory-store retention (short — hours to days) and magnetic-store retention (longer)
-- [ ] Set up Glue Data Catalog + crawler if using Athena for ad hoc querying of the S3 layer
-- [ ] Write a small script/notebook to sanity-check data completeness (are there gaps in the time series?)
+- [x] Create S3 buckets: raw landing zone, curated Parquet layer — raw bucket from section 3; `CuratedBucket` added in `infra/stacks/storage_stack.py` (empty container — the raw→curated transform job itself isn't built yet)
+- [x] Define S3 partitioning scheme (e.g., `source/year/month/day/`) — `<feed>/<yyyy>/<mm>/<dd>/<HHMM>.json`, already in use since the ingestion Lambda (`lambdas/ingestion/handler.py`'s `raw_key()`)
+- [x] Set up S3 lifecycle policies (transition raw data to Infrequent Access/Glacier after 30–90 days) — Standard → IA at 30 days → Glacier at 90 days, on the raw bucket
+- [ ] ~~Create Timestream database + table(s) for the hot, query-facing time series~~ — **Descoped 2026-09-15**: Timestream's only real use case was backing a live-readings dashboard view, which was cut (see section 8) as redundant with existing public space-weather sites. Not free-tier eligible either, so cutting it also removes an ongoing cost with no remaining use. S3 raw → curated (Parquet) is the only store the platform needs.
+- [ ] ~~Configure Timestream memory-store retention (short — hours to days) and magnetic-store retention (longer)~~ — descoped along with the item above
+- [x] Set up Glue Data Catalog + crawler if using Athena for ad hoc querying of the S3 layer — `space_weather_raw_<stage>` database + on-demand crawler over the raw bucket (note: raw JSON is nested per-feed, not flat — clean Athena querying really wants the curated layer; this crawler is a stopgap for ad hoc raw debugging)
+- [x] Write a small script/notebook to sanity-check data completeness (are there gaps in the time series?) — `scripts/check_data_completeness.py`; run against the live raw bucket, it confirmed the Kp feeds are 100% complete and surfaced real ~2-3 min upstream telemetry dropouts already present in the RTSW plasma/mag source data (not an ingestion issue — DLQ is empty)
 
 ## 5. Superposed epoch analysis (SEA)
 
-- [ ] Assemble the event catalog (storm onset times, CME arrival times) as a static dataset in S3
+- [ ] Assemble the event catalog (storm onset times, CME arrival times) as a static dataset in S3 — source is the DONKI GST API, see `docs/data-sources.md`
 - [ ] Write the core SEA function: given an event list and a window size, extract and align time-series segments on epoch time
 - [ ] Decide on normalization approach (raw values vs. deviation from baseline vs. normalized amplitude)
 - [ ] Implement aggregation (mean, median, percentile bands) across aligned events
@@ -81,9 +81,9 @@ A living checklist for building the real-time dashboard, ML forecasting pipeline
 
 ## 7. API & serving layer
 
-- [ ] Design the API contract: endpoints for latest readings, historical range queries, forecast results, SEA results
+- [ ] Design the API contract: endpoints for historical range queries, forecast results, SEA results
 - [ ] Set up API Gateway REST API + Lambda resolvers
-- [ ] Set up API Gateway WebSocket API for live push of new readings
+- [ ] ~~Set up API Gateway WebSocket API for live push of new readings~~ — **Descoped 2026-09-15**: no live-readings view to push updates to, see section 8
 - [ ] Add Cognito user pool if you want authenticated access (optional for a portfolio demo — could also leave public/read-only)
 - [ ] Add basic rate limiting / usage plans on API Gateway
 - [ ] Write integration tests hitting a deployed dev-stage API
@@ -91,12 +91,12 @@ A living checklist for building the real-time dashboard, ML forecasting pipeline
 
 ## 8. Dashboard / frontend
 
-- [ ] Choose stack (React + D3/Plotly, or Grafana connected to Timestream — pick one path and don't split effort)
-- [ ] Build the live readings view (current Kp, solar wind, alerts)
+- [ ] Choose stack (React + D3/Plotly — pick one path and don't split effort)
+- [ ] ~~Build the live readings view (current Kp, solar wind, alerts)~~ — **Descoped 2026-09-15**: redundant with existing public tools (e.g. SWPC's own site); this dashboard's value is in SEA + forecast, not re-displaying live readings that already exist elsewhere
 - [ ] Build the historical explorer (date range picker + chart)
 - [ ] Build the SEA visualization (aligned event overlays with mean/median band)
 - [ ] Build the forecast view (predicted Kp/storm probability with confidence indication)
-- [ ] Wire up WebSocket client for live updates
+- [ ] ~~Wire up WebSocket client for live updates~~ — descoped along with the live readings view above
 - [ ] Handle loading/error/empty states gracefully
 - [ ] Deploy to S3 + CloudFront
 - [ ] Set up cache invalidation on frontend deploys
@@ -117,7 +117,7 @@ A living checklist for building the real-time dashboard, ML forecasting pipeline
 - [ ] CloudWatch dashboards for Lambda errors/duration, API latency, DLQ depth
 - [ ] Alarms wired to an SNS topic (email/Slack) for critical failures
 - [ ] Confirm AWS Budgets alert is still active and threshold still makes sense as usage grows
-- [ ] Periodic review of Timestream retention settings vs. actual query patterns
+- [ ] ~~Periodic review of Timestream retention settings vs. actual query patterns~~ — descoped along with Timestream itself, see section 4
 - [ ] Review Cost Explorer monthly, compare against the estimate table in the cost writeup
 
 ## 11. Documentation & portfolio polish

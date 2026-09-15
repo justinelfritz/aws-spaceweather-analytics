@@ -26,8 +26,8 @@ def stack_name(name: str) -> str:
     return f"SpaceWeather-{name}-{stage}"
 
 
-storage = StorageStack(app, stack_name("Storage"), env=env)
-ingestion = IngestionStack(app, stack_name("Ingestion"), env=env)
+storage = StorageStack(app, stack_name("Storage"), stage=stage, env=env)
+ingestion = IngestionStack(app, stack_name("Ingestion"), raw_bucket=storage.raw_bucket, env=env)
 sea = SeaStack(app, stack_name("Sea"), env=env)
 ml = MlStack(app, stack_name("Ml"), env=env)
 api = ApiStack(app, stack_name("Api"), env=env)
