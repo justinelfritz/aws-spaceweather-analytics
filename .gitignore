@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# CDK
+infra/cdk.out/
+infra/cdk.context.json
+*.cdk.staging/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/build/
+npm-debug.log*
+
+# AWS / credentials
+.aws-sam/
+*.pem
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Data (avoid committing large downloaded datasets)
+*.parquet
+data/raw/
+data/curated/
