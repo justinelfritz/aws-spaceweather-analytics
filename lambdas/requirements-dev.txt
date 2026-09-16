@@ -1,3 +1,7 @@
 pytest==8.4.2
 boto3==1.40.32
 moto[s3]==5.1.13
+# Only needed to test lambdas/api/historical.py locally -- the deployed
+# Lambda gets pyarrow from the AWS-managed "AWSSDKPandas" layer instead of
+# bundling it (see infra/stacks/api_stack.py), so this isn't in requirements.txt.
+pyarrow==21.0.0

@@ -28,10 +28,10 @@ def stack_name(name: str) -> str:
 
 storage = StorageStack(app, stack_name("Storage"), stage=stage, env=env)
 ingestion = IngestionStack(app, stack_name("Ingestion"), raw_bucket=storage.raw_bucket, env=env)
-sea = SeaStack(app, stack_name("Sea"), env=env)
-ml = MlStack(app, stack_name("Ml"), env=env)
-api = ApiStack(app, stack_name("Api"), env=env)
-frontend = FrontendStack(app, stack_name("Frontend"), env=env)
+sea = SeaStack(app, stack_name("Sea"), curated_bucket=storage.curated_bucket, env=env)
+ml = MlStack(app, stack_name("Ml"), curated_bucket=storage.curated_bucket, env=env)
+api = ApiStack(app, stack_name("Api"), curated_bucket=storage.curated_bucket, env=env)
+frontend = FrontendStack(app, stack_name("Frontend"), stage=stage, env=env)
 
 for stack in (storage, ingestion, sea, ml, api, frontend):
     Tags.of(stack).add("Project", "space-weather")

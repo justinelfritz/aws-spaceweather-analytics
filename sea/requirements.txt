@@ -1,0 +1,7 @@
+# Core SEA logic (alignment.py, normalization.py, aggregation.py) uses only
+# the standard library. boto3/pyarrow below are for load_data.py and the
+# validation scripts, which read real curated S3 data -- a preview of what
+# the eventual Fargate/Glue packaging (section 5) will need to run this for
+# real. pandas/scipy may get added once that packaging step is built.
+boto3==1.40.32
+pyarrow==21.0.0

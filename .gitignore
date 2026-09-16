@@ -16,6 +16,14 @@ infra/cdk.out/
 infra/cdk.context.json
 *.cdk.staging/
 
+# Python wheel build output (sea/pyproject.toml -> sea/dist/*.whl for the
+# Glue Python shell job's --extra-py-files; rebuild, don't commit the wheel)
+sea/dist/
+sea/build/
+
+# Trained model binaries + per-run metrics (regenerate via ml/train.py)
+ml/models/
+
 # Node / frontend
 node_modules/
 frontend/dist/
