@@ -83,3 +83,9 @@ export const NORMALIZATION_LABELS = {
 export const FORECAST_TARGETS = ["kp", "dst_index"];
 
 export const ERROR_TYPES = ["signed_error", "abs_error"];
+
+// Plain-language labels for the forecast-skill error types.
+export const ERROR_TYPE_LABELS = {
+  signed_error: "Signed Error",
+  abs_error: "Absolute Error",
+};

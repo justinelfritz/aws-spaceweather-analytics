@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import "./App.css";
 import StatusMessage from "./components/StatusMessage.jsx";
 
@@ -16,7 +16,28 @@ const TABS = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(TABS[0].id);
-  const ActiveComponent = TABS.find((tab) => tab.id === activeTab).Component;
+  // Every tab ever visited stays mounted (see the render below) so
+  // switching away and back preserves its state instead of losing it to
+  // unmount/remount -- only the *first* visit needs to wait on the lazy
+  // import.
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set([TABS[0].id]));
+
+  function activateTab(id) {
+    setVisitedTabs((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    setActiveTab(id);
+  }
+
+  useEffect(() => {
+    // A tab hidden via display:none reports zero size to Plotly, and
+    // nothing tells it to remeasure once it's shown again -- each chart
+    // already listens for window resize (react-plotly.js's
+    // useResizeHandler), so nudging that on every tab switch is enough,
+    // with no changes needed in the view components themselves. Deferred
+    // to the next frame so the display:none -> block change has already
+    // taken effect before Plotly remeasures.
+    const raf = requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    return () => cancelAnimationFrame(raf);
+  }, [activeTab]);
 
   return (
     <div className="app">
@@ -32,7 +53,7 @@ export default function App() {
           <button
             key={tab.id}
             className={tab.id === activeTab ? "tab active" : "tab"}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => activateTab(tab.id)}
             aria-current={tab.id === activeTab}
           >
             {tab.label}
@@ -40,9 +61,16 @@ export default function App() {
         ))}
       </nav>
       <main>
-        <Suspense fallback={<StatusMessage kind="loading">Loading&hellip;</StatusMessage>}>
-          <ActiveComponent />
-        </Suspense>
+        {TABS.map(
+          (tab) =>
+            visitedTabs.has(tab.id) && (
+              <div key={tab.id} hidden={tab.id !== activeTab}>
+                <Suspense fallback={<StatusMessage kind="loading">Loading&hellip;</StatusMessage>}>
+                  <tab.Component />
+                </Suspense>
+              </div>
+            ),
+        )}
       </main>
     </div>
   );

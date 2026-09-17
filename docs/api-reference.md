@@ -64,7 +64,10 @@ GET /historical?fields=kp,dst_index&start=2024-05-10&end=2024-05-12
 
 The DONKI geomagnetic storm catalog (`scripts/backfill_donki_gst.py`).
 Powers storm markers on the historical explorer and the event picker for
-the SEA / forecast-skill views.
+the SEA / forecast-skill views. `min_dst` isn't part of DONKI's own data —
+it's computed from the curated OMNIWeb Dst series in a window around each
+storm's onset (-24h to +72h, matching SEA's default window) and can be
+`null` if that OMNIWeb data isn't backfilled yet for the relevant years.
 
 **Query parameters** (both optional — omit both for the full catalog)
 
@@ -89,6 +92,7 @@ GET /events?start=2024-01-01&end=2024-12-31
       "max_kp": 9.0,
       "max_kp_time": "2024-05-11T00:00:00+00:00",
       "storm_class": "G5",
+      "min_dst": -412,
       "kp_readings": [...],
       "linked_event_ids": [...],
       "linked_cme_ids": [...],

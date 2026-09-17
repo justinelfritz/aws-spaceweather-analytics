@@ -237,6 +237,7 @@ export default function HistoricalExplorer() {
                     <th>Onset (UTC)</th>
                     <th>Class</th>
                     <th>Max Kp</th>
+                    <th>Min Dst [nT]</th>
                     <th>Source</th>
                   </tr>
                 </thead>
@@ -246,6 +247,7 @@ export default function HistoricalExplorer() {
                       <td>{new Date(eventRecord.start_time).toISOString().slice(0, 16).replace("T", " ")}</td>
                       <td>{eventRecord.storm_class}</td>
                       <td>{eventRecord.max_kp}</td>
+                      <td>{eventRecord.min_dst ?? "—"}</td>
                       <td>
                         {eventRecord.source_link ? (
                           <a href={eventRecord.source_link} target="_blank" rel="noreferrer noopener">

@@ -1,9 +1,17 @@
 import { useState } from "react";
 import Plot from "react-plotly.js";
 import { ApiError, fetchForecastSkill } from "../api.js";
-import { ERROR_TYPES, FORECAST_TARGETS } from "../constants.js";
+import { ERROR_TYPE_LABELS, ERROR_TYPES, FIELD_LABELS, FORECAST_TARGETS } from "../constants.js";
 import { usePlotTheme } from "../theme.js";
 import StatusMessage from "./StatusMessage.jsx";
+
+// Same "name + parenthetical qualifier" convention as SeaVisualization.jsx's
+// yAxisTitle -- unlike SEA's z-score case, the error stays in the target's
+// own units (it's a plain difference, not a normalized/scaled quantity),
+// so the unit is kept rather than stripped.
+function yAxisTitle(target, errorType) {
+  return `${FIELD_LABELS[target]} (${ERROR_TYPE_LABELS[errorType]})`;
+}
 
 function bandTraces(offsets) {
   const x = offsets.map((o) => o.offset);
@@ -82,7 +90,7 @@ export default function ForecastSkillView() {
             <select value={target} onChange={(e) => setTarget(e.target.value)}>
               {FORECAST_TARGETS.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {FIELD_LABELS[t]}
                 </option>
               ))}
             </select>
@@ -92,7 +100,7 @@ export default function ForecastSkillView() {
             <select value={errorType} onChange={(e) => setErrorType(e.target.value)}>
               {ERROR_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {ERROR_TYPE_LABELS[t]}
                 </option>
               ))}
             </select>
@@ -117,9 +125,9 @@ export default function ForecastSkillView() {
               autosize: true,
               margin: { t: 20, r: 30, l: 60, b: 40 },
               font: theme.font,
-              xaxis: { title: { text: "Hours from storm onset" }, gridcolor: theme.gridcolor, zeroline: true },
+              xaxis: { title: { text: "Hours from Storm Onset [h]" }, gridcolor: theme.gridcolor, zeroline: true },
               yaxis: {
-                title: { text: `${state.result.target} ${state.result.error_type}` },
+                title: { text: yAxisTitle(state.result.target, state.result.error_type) },
                 gridcolor: theme.gridcolor,
               },
               legend: { orientation: "h" },

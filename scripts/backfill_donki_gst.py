@@ -16,21 +16,37 @@ writes a normalized, flattened catalog to the curated bucket at a fixed
 key. Re-running overwrites both with the latest data — safe to schedule
 periodically (e.g. daily) to pick up newly issued storms.
 
+Each entry is also enriched with `min_dst` -- the lowest Dst index reading
+in a window around the storm's onset (see enrich_with_min_dst), computed
+from the curated OMNIWeb data at --curated-bucket, not anything DONKI's own
+API provides. Requires that OMNIWeb backfill to already cover the relevant
+years (scripts/backfill_omniweb.py); null for any storm it doesn't.
+
 Usage:
     python backfill_donki_gst.py --raw-bucket ... --curated-bucket ... --profile sw-bootstrap
 """
 
 import argparse
+import io
 import json
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
+import pyarrow.parquet as pq
+from botocore.exceptions import ClientError
 
 DONKI_GST_URL = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/GST"
 CATALOG_START_DATE = "2010-01-01"  # a few months before the earliest confirmed event, for safety
+
+# Window used to compute each storm's minimum Dst -- matches the SEA
+# pipeline's own default pre/post-onset window (sea/run_sea_job.py's
+# --hours-before/--hours-after defaults), so "how far Dst dipped for this
+# storm" means the same window SEA already uses everywhere else.
+MIN_DST_HOURS_BEFORE = 24
+MIN_DST_HOURS_AFTER = 72
 
 
 def parse_args():
@@ -106,6 +122,54 @@ def build_catalog(raw_events: list[dict]) -> list[dict]:
     return catalog
 
 
+def _load_dst_year(s3, curated_bucket: str, year: int) -> dict:
+    """{timestamp: dst_index value} for one curated OMNIWeb year partition
+    (see scripts/backfill_omniweb.py), or {} if that year hasn't been
+    backfilled yet -- e.g. a storm near year-end whose window reaches into
+    a not-yet-existent future year."""
+    key = f"curated/omniweb_omni2_hourly/year={year}/data.parquet"
+    try:
+        obj = s3.get_object(Bucket=curated_bucket, Key=key)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return {}
+        raise
+    table = pq.read_table(io.BytesIO(obj["Body"].read()), columns=["timestamp", "dst_index"])
+    series = {}
+    for timestamp, value in zip(table["timestamp"].to_pylist(), table["dst_index"].to_pylist()):
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        series[timestamp] = value
+    return series
+
+
+def enrich_with_min_dst(s3, curated_bucket: str, catalog: list[dict]) -> None:
+    """Adds "min_dst" (the lowest/most negative Dst index within
+    [onset - MIN_DST_HOURS_BEFORE, onset + MIN_DST_HOURS_AFTER]) to each
+    catalog entry, in place -- None if the needed OMNIWeb years aren't
+    backfilled yet or the window has no non-null Dst readings."""
+    onsets = {entry["gst_id"]: datetime.fromisoformat(entry["start_time"]) for entry in catalog}
+
+    years_needed = set()
+    for onset in onsets.values():
+        years_needed.update({onset.year - 1, onset.year, onset.year + 1})
+
+    dst_series = {}
+    for year in sorted(years_needed):
+        dst_series.update(_load_dst_year(s3, curated_bucket, year))
+
+    for entry in catalog:
+        onset = onsets[entry["gst_id"]]
+        window_start = onset - timedelta(hours=MIN_DST_HOURS_BEFORE)
+        window_end = onset + timedelta(hours=MIN_DST_HOURS_AFTER)
+        values = [
+            value
+            for timestamp, value in dst_series.items()
+            if window_start <= timestamp <= window_end and value is not None
+        ]
+        entry["min_dst"] = min(values) if values else None
+
+
 def main():
     args = parse_args()
     session = boto3.Session(profile_name=args.profile) if args.profile else boto3.Session()
@@ -113,6 +177,7 @@ def main():
 
     raw_events = fetch_gst_events(args.start_date, args.end_date)
     catalog = build_catalog(raw_events)
+    enrich_with_min_dst(s3, args.curated_bucket, catalog)
 
     pulled_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     raw_key = f"raw/donki_gst/pulled_at={pulled_at}/gst_events.json"
