@@ -47,8 +47,15 @@ class ApiStack(Stack):
             handler="api.historical.handler",
             code=code,
             layers=[pandas_layer],
-            timeout=Duration.seconds(30),
-            memory_size=512,
+            # 29s, not just "high enough" -- API Gateway REST APIs have a
+            # hard, non-configurable 29s integration timeout, so anything
+            # longer here would never actually get used; this just avoids
+            # Lambda cutting the invocation short before API Gateway would.
+            # In practice a full 63-year range still finishes in ~1-2s
+            # thanks to the concurrent per-year S3 fetches (see
+            # lambdas/api/historical.py's _fetch_years).
+            timeout=Duration.seconds(29),
+            memory_size=1024,
             environment=common_env,
         )
 

@@ -37,10 +37,39 @@ def test_sea_stack_synthesizes():
     storage = StorageStack(app, "storage", stage="dev")
     sea = SeaStack(app, "sea", curated_bucket=storage.curated_bucket)
     template = assertions.Template.from_stack(sea)
+    # Still exactly one Glue job *definition* -- the Map state below invokes
+    # it 54 times (once per field x normalization combination), it doesn't
+    # create 54 separate job resources.
     template.resource_count_is("AWS::Glue::Job", 1)
     template.resource_count_is("AWS::StepFunctions::StateMachine", 1)
     template.resource_count_is("AWS::Events::Rule", 1)
     template.has_resource_properties("AWS::Glue::Job", {"Command": {"Name": "pythonshell"}})
+    # Concurrent Glue runs of the same job are capped at 1 by default --
+    # must be raised, or the Map state's concurrent GlueStartJobRun calls
+    # would mostly fail with ConcurrentRunsExceededException.
+    template.has_resource_properties("AWS::Glue::Job", {"ExecutionProperty": {"MaxConcurrentRuns": 8}})
+
+    # The state machine's DefinitionString is an Fn::Join of raw string
+    # fragments interleaved with intrinsic-function refs (e.g. {"Ref": ...}
+    # for the partition) -- reassemble just the string parts to get the
+    # literal ASL JSON text, rather than re-running the whole template
+    # through json.dumps (which would double-escape the quotes already
+    # inside that embedded JSON string and break substring matching).
+    state_machine_resource = next(
+        resource
+        for resource in template.to_json()["Resources"].values()
+        if resource["Type"] == "AWS::StepFunctions::StateMachine"
+    )
+    join_parts = state_machine_resource["Properties"]["DefinitionString"]["Fn::Join"][1]
+    definition = "".join(part for part in join_parts if isinstance(part, str))
+
+    assert '"Type":"Map"' in definition
+    assert '"ItemsPath":"$.combinations"' in definition
+    assert '"MaxConcurrency":8' in definition
+    assert definition.count('"field":"kp"') >= 1
+    assert definition.count('"normalization":"normalized_amplitude"') == 18  # once per field
+    assert '"--field.$":"$.field"' in definition
+    assert '"--normalization.$":"$.normalization"' in definition
 
 
 def test_ml_stack_synthesizes():

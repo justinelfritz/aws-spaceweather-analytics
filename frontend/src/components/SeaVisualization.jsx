@@ -1,9 +1,21 @@
 import { useState } from "react";
 import Plot from "react-plotly.js";
 import { ApiError, fetchSeaResult } from "../api.js";
-import { NORMALIZATIONS, QUERYABLE_FIELDS } from "../constants.js";
+import { FIELD_LABELS, FIELDS_IN_DISPLAY_ORDER, NORMALIZATION_LABELS, NORMALIZATIONS } from "../constants.js";
 import { usePlotTheme } from "../theme.js";
 import StatusMessage from "./StatusMessage.jsx";
+
+// normalized_amplitude divides a baseline deviation by that same baseline's
+// own standard deviation -- both in the field's original units, so they
+// cancel. The result is a dimensionless z-score, not a quantity in the
+// field's units, so the axis label needs to drop the unit and say so
+// (raw and baseline_deviation both stay in the field's real units --
+// subtracting a mean doesn't change units -- so they keep the label as-is).
+function yAxisTitle(field, normalization) {
+  const label = FIELD_LABELS[field];
+  if (normalization !== "normalized_amplitude") return label;
+  return `${label.replace(/\s*\[[^\]]*\]$/, "")} (Z-Score)`;
+}
 
 function bandTraces(offsets, color) {
   const x = offsets.map((o) => o.offset);
@@ -80,9 +92,9 @@ export default function SeaVisualization() {
           <label>
             Field
             <select value={field} onChange={(e) => setField(e.target.value)}>
-              {QUERYABLE_FIELDS.map((f) => (
+              {FIELDS_IN_DISPLAY_ORDER.map((f) => (
                 <option key={f} value={f}>
-                  {f}
+                  {FIELD_LABELS[f]}
                 </option>
               ))}
             </select>
@@ -92,7 +104,7 @@ export default function SeaVisualization() {
             <select value={normalization} onChange={(e) => setNormalization(e.target.value)}>
               {NORMALIZATIONS.map((n) => (
                 <option key={n} value={n}>
-                  {n}
+                  {NORMALIZATION_LABELS[n]}
                 </option>
               ))}
             </select>
@@ -118,8 +130,11 @@ export default function SeaVisualization() {
               autosize: true,
               margin: { t: 20, r: 30, l: 60, b: 40 },
               font: theme.font,
-              xaxis: { title: "Hours from storm onset", gridcolor: theme.gridcolor, zeroline: true },
-              yaxis: { title: field, gridcolor: theme.gridcolor },
+              xaxis: { title: { text: "Hours from Storm Onset [h]" }, gridcolor: theme.gridcolor, zeroline: true },
+              yaxis: {
+                title: { text: yAxisTitle(state.result.field, state.result.normalization) },
+                gridcolor: theme.gridcolor,
+              },
               legend: { orientation: "h" },
               paper_bgcolor: "transparent",
               plot_bgcolor: "transparent",

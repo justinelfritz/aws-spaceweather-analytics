@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from aws_cdk import CfnOutput, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_s3 as s3
@@ -63,18 +63,52 @@ class FrontendStack(Stack):
             price_class=cloudfront.PriceClass.PRICE_CLASS_100,
         )
 
-        # `distribution`/`distribution_paths` here is what gives us "cache
-        # invalidation on frontend deploys" for free -- every `cdk deploy`
-        # that changes the built assets invalidates the whole distribution
-        # after upload, no separate script needed.
-        s3_deployment.BucketDeployment(
+        # Two deployments, not one, because index.html and the hashed
+        # /assets/*.js|css files need opposite caching rules -- confirmed
+        # the hard way: shipping this as a single deployment with no
+        # explicit Cache-Control left S3/CloudFront defaults in place, and
+        # a browser that had already loaded the site could keep serving a
+        # stale cached index.html indefinitely (CloudFront's own edge cache
+        # *does* get invalidated correctly on every deploy -- distribution_paths
+        # below -- but that never reaches a browser that never re-asks it).
+        #
+        # Hashed assets (filename changes on any content change) can be
+        # cached by the browser forever.
+        assets_deployment = s3_deployment.BucketDeployment(
             self,
-            "DeploySite",
-            sources=[s3_deployment.Source.asset(str(FRONTEND_DIST))],
+            "DeploySiteAssets",
+            sources=[s3_deployment.Source.asset(str(FRONTEND_DIST), exclude=["index.html"])],
             destination_bucket=site_bucket,
+            cache_control=[
+                s3_deployment.CacheControl.set_public(),
+                s3_deployment.CacheControl.max_age(Duration.days(365)),
+                s3_deployment.CacheControl.immutable(),
+            ],
+        )
+
+        # index.html's own filename never changes, so it must always be
+        # revalidated -- otherwise it can keep pointing at yesterday's
+        # (possibly now-deleted) hashed asset filenames forever. `prune=False`
+        # and running after the assets deployment (`add_dependency` below)
+        # so this never races ahead of, or wipes out, the assets deployment
+        # above -- both deployments write to the same bucket.
+        index_deployment = s3_deployment.BucketDeployment(
+            self,
+            "DeploySiteIndex",
+            sources=[s3_deployment.Source.asset(str(FRONTEND_DIST), exclude=["*", "!index.html"])],
+            destination_bucket=site_bucket,
+            cache_control=[s3_deployment.CacheControl.no_cache()],
+            prune=False,
+            # `distribution`/`distribution_paths` here is what gives us
+            # "cache invalidation on frontend deploys" for free -- every
+            # `cdk deploy` that changes the built assets invalidates the
+            # whole distribution after upload, no separate script needed.
+            # Placed on this (the later) deployment so the invalidation
+            # only fires once both deployments have finished uploading.
             distribution=distribution,
             distribution_paths=["/*"],
         )
+        index_deployment.node.add_dependency(assets_deployment)
 
         CfnOutput(self, "SiteUrl", value=f"https://{distribution.distribution_domain_name}")
         self.distribution = distribution

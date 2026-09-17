@@ -14,6 +14,16 @@ import pyarrow.parquet as pq
 
 from alignment import Event
 
+# Bx is the one queryable field that isn't a 1:1 column name match: GSE and
+# GSM share the same X-axis by definition (both point from Earth to the
+# Sun; only Y/Z differ, rotated about that shared axis), so OMNI2 only
+# publishes a single physical Bx column (`bx_gse_gsm` -- omni2_format.py)
+# rather than separate GSM/GSE ones. `bx_gsm`/`bx_gse` are exposed as two
+# separate queryable fields anyway (matching how By/Bz are split) and will
+# always return numerically identical values -- expected, not a bug.
+# Mirrors lambdas/api/historical.py's copy of this same mapping.
+FIELD_COLUMN = {"bx_gsm": "bx_gse_gsm", "bx_gse": "bx_gse_gsm"}
+
 
 def load_event_catalog(s3, curated_bucket: str, min_start_time: datetime = None, max_start_time: datetime = None) -> list:
     obj = s3.get_object(Bucket=curated_bucket, Key="curated/event_catalog/geomagnetic_storms.json")
@@ -45,8 +55,9 @@ def load_omniweb_series(s3, curated_bucket: str, field: str, years: list) -> dic
                 print(f"  (no curated OMNIWeb data for {year} yet -- skipping)")
                 continue
             raise
-        table = pq.read_table(io.BytesIO(obj["Body"].read()), columns=["timestamp", field])
-        for timestamp, value in zip(table["timestamp"].to_pylist(), table[field].to_pylist()):
+        column = FIELD_COLUMN.get(field, field)
+        table = pq.read_table(io.BytesIO(obj["Body"].read()), columns=["timestamp", column])
+        for timestamp, value in zip(table["timestamp"].to_pylist(), table[column].to_pylist()):
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=timezone.utc)
             series[timestamp] = value

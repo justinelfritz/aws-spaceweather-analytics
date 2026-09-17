@@ -117,8 +117,11 @@ export default function ForecastSkillView() {
               autosize: true,
               margin: { t: 20, r: 30, l: 60, b: 40 },
               font: theme.font,
-              xaxis: { title: "Hours from storm onset", gridcolor: theme.gridcolor, zeroline: true },
-              yaxis: { title: `${target} ${errorType}`, gridcolor: theme.gridcolor },
+              xaxis: { title: { text: "Hours from storm onset" }, gridcolor: theme.gridcolor, zeroline: true },
+              yaxis: {
+                title: { text: `${state.result.target} ${state.result.error_type}` },
+                gridcolor: theme.gridcolor,
+              },
               legend: { orientation: "h" },
               paper_bgcolor: "transparent",
               plot_bgcolor: "transparent",

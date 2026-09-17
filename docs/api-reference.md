@@ -29,10 +29,15 @@ Max range per request: 366 days. Missing year-partitions inside the range
 
 **Valid fields**: `kp`, `dst_index`, `ae_index`, `ap_index`,
 `sunspot_number_r`, `plasma_speed`, `proton_density`, `proton_temperature`,
-`field_magnitude_avg`, `bz_gsm`, `by_gsm`, `bz_gse`, `by_gse`,
-`flow_pressure`, `electric_field`, `f107_index` — the physically meaningful
-curated columns; internal provenance columns (spacecraft IDs, per-hour point
-counts, sigma/uncertainty fields) aren't exposed.
+`field_magnitude_avg`, `bx_gsm`, `by_gsm`, `bz_gsm`, `bx_gse`, `by_gse`,
+`bz_gse`, `flow_pressure`, `electric_field`, `f107_index` — the physically
+meaningful curated columns; internal provenance columns (spacecraft IDs,
+per-hour point counts, sigma/uncertainty fields) aren't exposed.
+`bx_gsm` and `bx_gse` always return numerically identical values: GSE and
+GSM share the same X-axis by definition (both point from Earth to the Sun;
+only Y and Z differ, rotated about that shared axis), so OMNI2 only
+publishes one physical Bx column. Exposed as two fields anyway for
+symmetry with By/Bz, which really do differ between the two frames.
 
 **Example**
 
