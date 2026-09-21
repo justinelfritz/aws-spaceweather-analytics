@@ -2,6 +2,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aggregation import aggregate_events  # noqa: E402
@@ -26,6 +28,26 @@ def test_aggregate_computes_mean_median_and_percentiles():
     assert result.percentiles[75] == 32.5
 
 
+def test_aggregate_computes_stderr_and_95_percent_ci_of_the_mean():
+    # stdev([10, 20, 30, 40]) == 12.909944...; stderr == stdev / sqrt(4)
+    events = [make_event(f"evt-{i}", [v]) for i, v in enumerate([10, 20, 30, 40])]
+    [result] = aggregate_events(offsets=[0], aligned_events=events, percentiles=(25, 75))
+
+    assert result.stderr == pytest.approx(6.454972243679028)
+    assert result.ci95_lower == pytest.approx(result.mean - 1.96 * result.stderr)
+    assert result.ci95_upper == pytest.approx(result.mean + 1.96 * result.stderr)
+
+
+def test_aggregate_stderr_and_ci_are_none_below_two_data_points():
+    events = [make_event("evt-0", [10])]
+    [result] = aggregate_events(offsets=[0], aligned_events=events, percentiles=(25, 75))
+
+    assert result.n == 1
+    assert result.stderr is None
+    assert result.ci95_lower is None
+    assert result.ci95_upper is None
+
+
 def test_aggregate_excludes_none_values_from_statistics():
     events = [make_event(f"evt-{i}", [v]) for i, v in enumerate([10, 20, None, 40])]
     [result] = aggregate_events(offsets=[0], aligned_events=events, percentiles=(50,))
@@ -43,6 +65,9 @@ def test_aggregate_offset_with_no_data_returns_none_and_zero_count():
     assert result.n == 0
     assert result.mean is None
     assert result.median is None
+    assert result.stderr is None
+    assert result.ci95_lower is None
+    assert result.ci95_upper is None
     assert result.percentiles == {25: None, 75: None}
 
 

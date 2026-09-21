@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--hours-after", type=int, default=72)
     parser.add_argument("--baseline-start-offset", type=int, default=-48)
     parser.add_argument("--baseline-end-offset", type=int, default=-6)
-    parser.add_argument("--percentiles", type=int, nargs="+", default=[25, 75])
+    parser.add_argument("--percentiles", type=int, nargs="+", default=[10, 25, 75, 90])
     parser.add_argument("--profile", default=None, help="AWS profile to use (default: default credential chain)")
     # Glue Python shell jobs pass every job parameter (including its own
     # framework args like --extra-py-files, --scriptLocation, --python-version)
@@ -84,6 +84,9 @@ def run(s3, args) -> dict:
                 "n": row.n,
                 "mean": row.mean,
                 "median": row.median,
+                "stderr": row.stderr,
+                "ci95_lower": row.ci95_lower,
+                "ci95_upper": row.ci95_upper,
                 "percentiles": {str(pct): value for pct, value in row.percentiles.items()},
             }
             for row in aggregated

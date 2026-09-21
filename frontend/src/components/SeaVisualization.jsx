@@ -27,12 +27,15 @@ function yAxisTitle(field, normalization) {
   return `${label.replace(/\s*\[[^\]]*\]$/, "")} (Z-Score)`;
 }
 
-function bandTraces(offsets, color) {
-  const x = offsets.map((o) => o.offset);
+// A percentile band is two traces: an invisible line at the upper bound,
+// then the lower bound filled "tonexty" back up to it. Two bands nest
+// visually (10-90 drawn wide and pale, 25-75 drawn narrower and darker on
+// top) since they're independent trace pairs, not one shape.
+function percentileBand(x, offsets, low, high, color, name) {
   return [
     {
       x,
-      y: offsets.map((o) => o.percentiles["75"]),
+      y: offsets.map((o) => o.percentiles[String(high)]),
       type: "scatter",
       mode: "lines",
       line: { width: 0 },
@@ -41,14 +44,60 @@ function bandTraces(offsets, color) {
     },
     {
       x,
-      y: offsets.map((o) => o.percentiles["25"]),
-      name: "25th–75th percentile",
+      y: offsets.map((o) => o.percentiles[String(low)]),
+      name,
       type: "scatter",
       mode: "lines",
       fill: "tonexty",
       fillcolor: color,
       line: { width: 0 },
     },
+  ];
+}
+
+// Distinct from the percentile bands above: those describe the spread of
+// the underlying storms, this describes the uncertainty of the mean line
+// itself (sea/aggregation.py's ci95_lower/upper, mean +/- 1.96 SEM) -- a
+// different color family so it doesn't read as "just another band".
+function confidenceBand(x, offsets, color) {
+  return [
+    {
+      x,
+      y: offsets.map((o) => o.ci95_upper),
+      type: "scatter",
+      mode: "lines",
+      line: { width: 0 },
+      showlegend: false,
+      hoverinfo: "skip",
+    },
+    {
+      x,
+      y: offsets.map((o) => o.ci95_lower),
+      name: "95% CI of mean",
+      type: "scatter",
+      mode: "lines",
+      fill: "tonexty",
+      fillcolor: color,
+      line: { width: 0 },
+    },
+  ];
+}
+
+function bandTraces(offsets) {
+  const x = offsets.map((o) => o.offset);
+  const first = offsets[0] ?? {};
+  // Precomputed results generated before stderr/ci95/the wider percentile
+  // set were added (docs/sea-on-demand-design.md) may still be sitting in
+  // S3 until the batch job next runs -- skip a band rather than plot
+  // `undefined` if its fields aren't there yet.
+  const hasWideBand = first.percentiles?.["10"] !== undefined && first.percentiles?.["90"] !== undefined;
+  const hasNarrowBand = first.percentiles?.["25"] !== undefined && first.percentiles?.["75"] !== undefined;
+  const hasConfidenceBand = first.ci95_lower !== undefined && first.ci95_upper !== undefined;
+
+  return [
+    ...(hasWideBand ? percentileBand(x, offsets, 10, 90, "rgba(170, 59, 255, 0.08)", "10th–90th percentile") : []),
+    ...(hasNarrowBand ? percentileBand(x, offsets, 25, 75, "rgba(170, 59, 255, 0.18)", "25th–75th percentile") : []),
+    ...(hasConfidenceBand ? confidenceBand(x, offsets, "rgba(0, 150, 136, 0.30)") : []),
     {
       x,
       y: offsets.map((o) => o.mean),
@@ -75,7 +124,7 @@ export default function SeaVisualization() {
   const theme = usePlotTheme();
 
   const [catalog, setCatalog] = useState({ status: "loading" });
-  const [filters, setFilters] = useState({ start: "", end: "", minClass: "", minKp: "" });
+  const [filters, setFilters] = useState({ start: "", end: "", minClass: "", minKp: "", maxDst: "" });
   const [selectedIds, setSelectedIds] = useState(null); // null until the catalog loads, then a Set of every gst_id
 
   useEffect(() => {
@@ -102,6 +151,12 @@ export default function SeaVisualization() {
       if (filters.end && e.start_time.slice(0, 10) > filters.end) return false;
       if (filters.minClass && e.storm_class < filters.minClass) return false;
       if (filters.minKp && !(e.max_kp >= Number(filters.minKp))) return false;
+      // Dst is negative for storms and more negative means more intense, so
+      // this is an upper bound: "at or below" this value, i.e. at least this
+      // intense. Events with no Dst reading (min_dst null -- see
+      // scripts/backfill_donki_gst.py's enrich_with_min_dst) can't satisfy
+      // any threshold, so they're excluded whenever this filter is active.
+      if (filters.maxDst !== "" && !(e.min_dst !== null && e.min_dst <= Number(filters.maxDst))) return false;
       return true;
     });
   }, [catalog, filters]);
@@ -246,6 +301,16 @@ export default function SeaVisualization() {
                     onChange={(e) => setFilters((prev) => ({ ...prev, minKp: e.target.value }))}
                   />
                 </label>
+                <label>
+                  Max Dst [nT]
+                  <input
+                    type="number"
+                    step="1"
+                    placeholder="e.g. -100"
+                    value={filters.maxDst}
+                    onChange={(e) => setFilters((prev) => ({ ...prev, maxDst: e.target.value }))}
+                  />
+                </label>
               </div>
 
               <details className="events-list" open={selectedIds && selectedIds.size < catalog.events.length}>
@@ -299,7 +364,7 @@ export default function SeaVisualization() {
       {state.status === "ready" && (
         <>
           <Plot
-            data={bandTraces(state.result.offsets, "rgba(170, 59, 255, 0.15)")}
+            data={bandTraces(state.result.offsets)}
             layout={{
               autosize: true,
               margin: { t: 20, r: 30, l: 60, b: 40 },

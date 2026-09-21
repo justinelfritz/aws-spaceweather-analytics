@@ -143,11 +143,30 @@ GET /sea/dst_index/raw
   "event_count": 200,
   "generated_at": "2026-09-15T21:34:08+00:00",
   "offsets": [
-    {"offset": -24, "n": 200, "mean": -9.1, "median": -7.0, "percentiles": {"25": -14.0, "75": -3.0}},
+    {
+      "offset": -24,
+      "n": 200,
+      "mean": -9.1,
+      "median": -7.0,
+      "stderr": 0.8,
+      "ci95_lower": -10.7,
+      "ci95_upper": -7.5,
+      "percentiles": {"10": -22.0, "25": -14.0, "75": -3.0, "90": 1.5}
+    },
     ...
   ]
 }
 ```
+
+`stderr`/`ci95_lower`/`ci95_upper` are the standard error of the mean and its
+95% confidence interval (`mean ± 1.96 * stderr`) — they describe how
+precisely the *mean* at that offset is known, which is a different question
+from the percentile band's "how spread out are the storms themselves".
+Both are `null` when `n < 2` (a single-event selection has no spread to
+estimate an error from). `percentiles` defaults to the 10th/25th/75th/90th
+(`sea/aggregation.py`'s `DEFAULT_PERCENTILES`) — the batch job can override
+this via `run_sea_job.py --percentiles`, so don't assume exactly these four
+keys are always present.
 
 ---
 

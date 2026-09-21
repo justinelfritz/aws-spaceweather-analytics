@@ -101,6 +101,9 @@ def _compute_result(bucket: str, field: str, normalization: str, events: list) -
                 "n": row.n,
                 "mean": row.mean,
                 "median": row.median,
+                "stderr": row.stderr,
+                "ci95_lower": row.ci95_lower,
+                "ci95_upper": row.ci95_upper,
                 "percentiles": {str(pct): value for pct, value in row.percentiles.items()},
             }
             for row in aggregated
