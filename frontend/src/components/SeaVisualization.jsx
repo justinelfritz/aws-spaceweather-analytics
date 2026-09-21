@@ -85,7 +85,6 @@ export default function SeaVisualization() {
         if (cancelled) return;
         const sorted = [...data.events].sort((a, b) => a.start_time.localeCompare(b.start_time));
         setCatalog({ status: "ready", events: sorted });
-        setSelectedIds(new Set(sorted.map((e) => e.gst_id)));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -106,6 +105,17 @@ export default function SeaVisualization() {
       return true;
     });
   }, [catalog, filters]);
+
+  // Filters set the candidate set for analysis, not just what's shown in the
+  // table below -- so changing a filter re-selects exactly the storms it now
+  // matches (this also covers the initial load, since an all-empty `filters`
+  // matches every storm). Individual checkbox toggles between filter changes
+  // are left alone; they're the fine-tuning step on top of that baseline.
+  useEffect(() => {
+    if (catalog.status !== "ready") return;
+    setSelectedIds(new Set(visibleEvents.map((e) => e.gst_id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog.status, filters]);
 
   function toggleEvent(gstId) {
     setSelectedIds((prev) => {
