@@ -77,6 +77,17 @@ class ApiStack(Stack):
             "SeaPipelineLayer",
             code=lambda_.Code.from_asset(
                 str(SEA_ROOT),
+                # CDK hashes this whole source tree to name the asset, even
+                # though _CopySeaPipelineModules only ever reads
+                # SEA_PIPELINE_MODULES -- without excluding the rest,
+                # anything unrelated changing under sea/ (rebuilding the
+                # Glue job's wheel in dist/, running pytest, .venv churn)
+                # spuriously changes this hash and forces a pointless Lambda
+                # layer replacement. Confirmed the hard way: rebuilding
+                # sea/dist/*.whl for infra/stacks/sea_stack.py alone showed
+                # up as a diff here despite the four .py files being
+                # byte-identical.
+                exclude=[".venv", "dist", "build", "*.egg-info", "**/tests", "**/__pycache__", ".pytest_cache"],
                 bundling=BundlingOptions(
                     # Never actually invoked -- _CopySeaPipelineModules.try_bundle
                     # always returns True, so CDK never falls back to running
