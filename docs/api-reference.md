@@ -6,8 +6,12 @@ curated/precomputed data, there's nothing to protect). Base URL is the
 `ApiUrl` CloudFormation output of the `SpaceWeather-Api-<stage>` stack,
 e.g. `https://<id>.execute-api.us-east-1.amazonaws.com/v1`.
 
-All responses are `application/json` with CORS enabled for all origins
-(`GET` only). Errors are `{"error": "<message>"}` with a 4xx status.
+All responses are `application/json` with CORS enabled for all origins.
+Every endpoint is `GET` except `/sea/{field}/{normalization}`, which also
+accepts `POST` for on-demand, caller-chosen-subset analysis (see below) --
+still effectively read-only, no state is mutated either way; `POST` is
+used there only because a meaningful event-selection payload doesn't fit
+safely in a URL. Errors are `{"error": "<message>"}` with a 4xx status.
 
 ---
 
@@ -109,10 +113,11 @@ GET /events?start=2024-01-01&end=2024-12-31
 
 ## `GET /sea/{field}/{normalization}`
 
-Precomputed superposed epoch analysis result (`sea/run_sea_job.py`),
-passed through from S3 as-is. `404` means that combination hasn't been
-computed yet, not that it's invalid — the weekly SEA job currently only
-runs `dst_index`/`raw` (see `infra/stacks/sea_stack.py`).
+Precomputed superposed epoch analysis result over the *full* DONKI catalog
+(`sea/run_sea_job.py`), passed through from S3 as-is. `404` means that
+combination hasn't been computed yet, not that it's invalid — the weekly
+SEA job runs the full 18-field x 3-normalization matrix (see
+`infra/stacks/sea_stack.py`).
 
 **Path parameters**
 
@@ -143,6 +148,46 @@ GET /sea/dst_index/raw
   ]
 }
 ```
+
+---
+
+## `POST /sea/{field}/{normalization}`
+
+On-demand superposed epoch analysis over a **caller-chosen subset** of the
+DONKI catalog (see `docs/sea-on-demand-design.md` for the full design
+rationale). Same path parameters and response shape as the `GET` above.
+
+**Body** (optional)
+
+```json
+{"event_ids": ["2024-05-10T15:00:00-GST-001", "2010-04-05T12:00:00-GST-001"]}
+```
+
+| case | behavior |
+|---|---|
+| body omitted, or `event_ids` omitted/`null` | identical to `GET` — the full-catalog precomputed result, one S3 lookup, no on-demand compute |
+| `event_ids` names every event in the current catalog | same fast path as above |
+| `event_ids` names a true subset | computed synchronously: filters the catalog, loads only the OMNIWeb years that subset touches, and re-runs the same align → normalize → aggregate pipeline the batch job uses. Typically finishes in a few seconds. |
+| `event_ids` is `[]` | `400` — omit the field entirely to request the full catalog instead |
+| `event_ids` contains an unknown `gst_id` | `400`, naming the unknown ID(s) |
+
+No minimum selection size is enforced server-side — even a single event
+returns a valid (if statistically trivial) result. The dashboard's SEA tab
+shows a "small sample" caveat below 10 selected events; that's a frontend
+convention, not an API rule.
+
+**Example**
+
+```
+POST /sea/dst_index/raw
+Content-Type: application/json
+
+{"event_ids": ["2024-05-10T15:00:00-GST-001"]}
+```
+
+Response shape is identical to the `GET` example above, except
+`event_count` reflects the requested subset (`1`, here) instead of the
+full catalog.
 
 ---
 
