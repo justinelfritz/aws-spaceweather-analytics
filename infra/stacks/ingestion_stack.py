@@ -42,7 +42,17 @@ class IngestionStack(Stack):
             handler="ingestion.handler.handler",
             code=lambda_.Code.from_asset(
                 str(LAMBDAS_ROOT),
-                exclude=[".venv", "**/tests", "**/__pycache__", "requirements-dev.txt"],
+                # Bundles the whole lambdas/ root (not just ingestion/) so the
+                # zip keeps the "ingestion" package prefix the handler path
+                # (ingestion.handler.handler) needs -- but this function never
+                # imports anything from api/, so excluding it keeps that
+                # unrelated code (and any changes to it) out of both this
+                # function's deployed package and its asset hash. Confirmed
+                # the hard way: editing lambdas/api/sea_results.py alone
+                # showed up as a diff here despite ingestion/handler.py being
+                # untouched -- the same class of bug api_stack.py's
+                # SeaPipelineLayer asset had for the same reason.
+                exclude=[".venv", "**/tests", "**/__pycache__", "requirements-dev.txt", "api"],
             ),
             timeout=Duration.seconds(30),
             memory_size=256,

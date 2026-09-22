@@ -39,7 +39,32 @@ class MlStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, curated_bucket: s3.IBucket, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        image_asset = ecr_assets.DockerImageAsset(self, "MlTrainingImage", directory=str(ML_ROOT))
+        image_asset = ecr_assets.DockerImageAsset(
+            self,
+            "MlTrainingImage",
+            directory=str(ML_ROOT),
+            # ml/Dockerfile only ever COPYs requirements.txt, data.py,
+            # features.py, train.py, and sagemaker_entrypoint.sh -- everything
+            # else here (retrained model artifacts in models/, the append-only
+            # experiments/log.jsonl, the eda/ and forecast_skill/ writeups,
+            # tests/) is unrelated to what the image actually runs, but
+            # without excluding it, any change to any of it still changes
+            # this asset's hash and forces a pointless image rebuild + push +
+            # training-job image swap. Same class of bug fixed for
+            # api_stack.py's SeaPipelineLayer and ingestion_stack.py's
+            # SwpcLiveFeedsFunction.
+            exclude=[
+                ".venv",
+                "__pycache__",
+                ".pytest_cache",
+                "tests",
+                "experiments",
+                "eda",
+                "models",
+                "forecast_skill",
+                "requirements-dev.txt",
+            ],
+        )
 
         train_task = sfn_tasks.SageMakerCreateTrainingJob(
             self,
