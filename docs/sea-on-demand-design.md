@@ -1,10 +1,8 @@
 # On-demand SEA: design decisions
 
-**Status: draft — decisions not yet made.** This document exists so every
-design decision for this feature gets made once, deliberately, before any
-code changes. Each decision below has options, trade-offs, and a
-recommendation; fill in "**Chosen:**" once you've decided. Once all
-decisions are marked, this doc becomes the implementation spec.
+**Status: decided 2026-09-17 — this is now the implementation spec.** All
+four decisions below are locked. See "Once decisions are made:
+implementation plan" at the bottom for the concrete build sequence.
 
 ## Motivation
 
@@ -74,7 +72,21 @@ covers the motivating use cases described above. A can be added later
 without reworking the API (see Decision 2) if it turns out people want to
 cherry-pick.
 
-**Chosen:** _______________
+**Chosen: C — both.** Filters (date range, min storm class, min Kp) narrow
+the events table already on the SEA tab down to a manageable candidate
+list; every row in that filtered list is then individually
+checkbox-selectable (default: all checked), so a user can filter down to
+"G3+ since 2020" and then still deselect two specific storms from that
+set.
+
+**Design consequence for the API (feeds Decision 2)**: filtering is a
+**frontend-only** concern. The client already has the full catalog (via
+`/events`) and can filter it in-browser with no backend involvement — it
+only ever needs to send the *final* resolved list of `gst_id`s to the SEA
+endpoint. So the backend never needs to know about "min Kp" or "storm
+class" as concepts; it only ever receives an explicit event-ID list. This
+keeps the server-side surface identical whether the user arrived at that
+list via filters, manual clicks, or both.
 
 ---
 
@@ -104,7 +116,25 @@ no URL-length concern, keeps the API's GET-only shape intact. If Decision
 1 = A or C (explicit selection), revisit this — POST becomes the safer
 default.
 
-**Chosen:** _______________
+**Chosen: B — POST with a JSON body.** Consistent with Decision 1 = C:
+since the client always resolves down to an explicit `gst_id` list (up to
+all ~200 events), a query-string approach risks multi-KB URLs in the
+"filtered down to almost nothing excluded" case. Endpoint becomes:
+
+```
+POST /sea/{field}/{normalization}
+Content-Type: application/json
+
+{"event_ids": ["2024-05-10T15:00:00-GST-001", "2010-04-05T12:00:00-GST-001", ...]}
+```
+
+Omitting `event_ids` entirely (or passing `null`) means "the full,
+unfiltered catalog" — this is also the shape the Decision 3 cache-hit
+fast path checks for first. This is the one endpoint in the API that
+isn't GET; `docs/api-reference.md`'s intro note about the API being
+GET-only/read-only needs a one-line caveat explaining why (it's still
+read-only in effect — no state is mutated — POST is used only because the
+selection payload doesn't fit in a URL).
 
 ---
 
@@ -135,7 +165,12 @@ pipeline keeps earning its keep.
 "genuinely on-demand" tension without an all-or-nothing call, at the cost
 of one extra branch (a cache-key check) in the Lambda.
 
-**Chosen:** _______________
+**Chosen: C — hybrid with a cache-hit fast path.** The batch pipeline
+(Glue + Step Functions, weekly schedule, 54 combos) stays exactly as-is.
+The Lambda's fast-path check: `event_ids` omitted/null, *or* `event_ids`
+present but its set is identical to the full current catalog's `gst_id`
+set → serve the existing precomputed `curated/sea_results/{field}/{normalization}.json`
+directly. Any other `event_ids` value → compute fresh synchronously.
 
 ---
 
@@ -155,7 +190,12 @@ discovering complaints later:
 single-storm case-study view is legitimate), but show a frontend caveat
 below a small threshold (e.g. <10 events).
 
-**Chosen:** _______________
+**Chosen: allow anything ≥1, frontend caveat below 10.** No server-side
+minimum — an empty `event_ids: []` is the one case that *should* 400
+(nothing to align against, not a "small sample" case), everything else
+from 1 event up returns a normal result. `SeaVisualization.jsx` shows a
+"small sample (fewer than 10 storms) — interpret with caution" note under
+the chart whenever `event_count < 10`.
 
 ---
 
@@ -178,38 +218,64 @@ decided now — flag if any should actually be in scope:
 
 ---
 
-## Once decisions are made: implementation plan
+## Implementation plan (locked)
 
-(To be finalized after the above are answered — sketch below assuming the
-recommended options.)
+1. **New Lambda handler** (`lambdas/api/sea_results.py`, extended to
+   handle `POST` alongside its existing `GET` passthrough — same file, new
+   branch on HTTP method):
+   - Parse the JSON body's `event_ids` (list of `gst_id` strings, or
+     absent/`null` for "full catalog").
+   - Load the full event catalog (`curated/event_catalog/geomagnetic_storms.json`,
+     same source `sea/load_data.py`'s `load_event_catalog` reads).
+   - **Cache-hit fast path** (Decision 3): if `event_ids` is absent/null,
+     or its set equals the full catalog's `gst_id` set, serve
+     `curated/sea_results/{field}/{normalization}.json` directly (today's
+     behavior, unchanged latency).
+   - Otherwise: reject `event_ids: []` with 400 ("no events selected");
+     otherwise filter the catalog down to the matching entries (400 on any
+     unknown `gst_id`), determine the touched OMNIWeb years for *that*
+     subset, concurrent per-year S3 reads for the one requested field
+     (same pattern as `historical.py`'s `_fetch_years`), then
+     align → normalize → aggregate by calling `sea/alignment.py`,
+     `normalization.py`, `aggregation.py` directly.
+   - Packaging: `sea/`'s pure-stdlib modules (`alignment.py`,
+     `normalization.py`, `aggregation.py`, the catalog-loading half of
+     `load_data.py`) need to be importable from the Lambda. Simplest path
+     given they're pure stdlib: copy/symlink them into `lambdas/api/` at
+     build time the same way this repo already bundles shared code,
+     rather than standing up a Lambda layer for a few dependency-free
+     files.
+2. **API Gateway**: add the `POST` method on the existing
+   `/sea/{field}/{normalization}` resource (CDK, `infra/stacks/api_stack.py`),
+   pointing at the same Lambda integration as the current `GET`.
+3. **API contract update**: `docs/api-reference.md` — document the new
+   `POST` body, the `event_ids` semantics (including "absent/null = full
+   catalog" and the cache-hit behavior), the 400 cases (empty list,
+   unknown `gst_id`), and the one-line caveat on why this single endpoint
+   isn't GET (see Decision 2).
+4. **Frontend** (`SeaVisualization.jsx`):
+   - Filter controls (date range, min storm class, min Kp) above an
+     events table reusing the historical explorer's table styling/columns
+     (onset, class, max Kp, min Dst, DONKI link) plus a leading checkbox
+     column, default all-checked, with select-all/none.
+   - "Load" now `POST`s the resolved `event_ids` (or omits the field
+     entirely when every event is checked, to hit the fast path and keep
+     the common case's request shape identical to today's).
+   - Small-sample caveat when `event_count < 10` (Decision 4).
+   - Loading state sized for synchronous compute latency — measure actual
+     cold Lambda latency against a real filtered request once deployed
+     before assuming a spinner vs. a progress-style indicator is right.
+5. **Tests**: catalog-filtering logic (unknown ID, empty list, full-set
+   equivalence detection for the cache-hit path), alignment against a
+   dynamic subset (0 matches → 400, 1 match → valid trivial result),
+   the cache-hit fast path itself (mock S3, assert no compute path is
+   invoked), API validation errors, frontend filter/selection state and
+   the small-sample caveat threshold.
+6. **Docs**: `docs/api-reference.md` (above) and
+   `space-weather-platform-todo.md` section 5 — mark this feature done
+   with a dated note once shipped, same convention as prior entries.
 
-1. **New/extended Lambda** (`lambdas/api/`) implementing: parse + validate
-   filter params → load + filter the event catalog
-   (`load_event_catalog`-equivalent) → determine touched OMNIWeb years for
-   the *filtered* set → concurrent S3 reads for the one requested field
-   (same pattern as `historical.py`'s `_fetch_years`) → align/normalize/
-   aggregate (reusing `sea/alignment.py`, `normalization.py`,
-   `aggregation.py` directly — these need to ship inside the Lambda's
-   bundle the same way `lambdas/` already bundles its own modules, or via
-   the existing `sea_lib` wheel as a layer; packaging approach TBD but not
-   expected to be hard, both are established patterns in this repo).
-2. **Cache-hit fast path** (if Decision 3 = C): a cheap check — "is this
-   exactly the unfiltered, full-catalog request?" — before falling through
-   to computing fresh.
-3. **API contract update**: new query params on `GET /sea/{field}/{normalization}`
-   (if Decision 2 = A), validation errors for bad filters, `docs/api-reference.md`
-   update.
-4. **Frontend**: filter controls (if Decision 1 = B) in `SeaVisualization.jsx`,
-   a loading state sized for synchronous compute latency (likely a few
-   seconds, to be measured against a real deployed Lambda before assuming),
-   and the small-sample caveat (Decision 4).
-5. **Tests**: filter/catalog-loading logic, alignment against a dynamic
-   subset (including edge cases: 0 matches, 1 match), the cache-hit fast
-   path, API validation errors.
-6. **Docs**: update `docs/api-reference.md` and
-   `space-weather-platform-todo.md` section 5 with the new capability and
-   the decisions made here.
-
-Rough sizing once decisions are locked: comparable to the original section 7
-API-layer build-out plus a meaningful slice of frontend work — not a
-one-sitting change, but well-bounded once the above is settled.
+Rough sizing: comparable to the original section 7 API-layer build-out
+plus a meaningful slice of frontend work (filter UI + selectable table +
+POST wiring) — not a one-sitting change, but well-bounded now that all
+four decisions above are locked.

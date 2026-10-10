@@ -100,6 +100,16 @@ def test_api_stack_synthesizes():
     template.has_resource_properties(
         "AWS::ApiGateway::Method", {"HttpMethod": "GET", "AuthorizationType": "NONE"}
     )
+    # POST is only added on /sea/{field}/{normalization}, for the on-demand
+    # caller-chosen-subset path (docs/sea-on-demand-design.md) -- every
+    # other resolver stays GET-only.
+    post_methods = template.find_resources("AWS::ApiGateway::Method", {"Properties": {"HttpMethod": "POST"}})
+    assert len(post_methods) == 1
+    # The SEA pipeline modules (alignment/normalization/aggregation/
+    # load_data) get vendored into a Lambda layer rather than bundled
+    # straight into the SeaResultsFunction's own code asset -- see
+    # infra/stacks/api_stack.py's SeaPipelineLayer.
+    template.resource_count_is("AWS::Lambda::LayerVersion", 1)
     template.has_resource_properties(
         "AWS::ApiGateway::Stage",
         {"StageName": "v1", "MethodSettings": [{"ThrottlingRateLimit": 10, "ThrottlingBurstLimit": 20}]},

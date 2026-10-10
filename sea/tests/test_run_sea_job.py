@@ -90,6 +90,10 @@ def test_run_produces_expected_aggregate_shape_and_values():
         assert row["n"] == 2
         assert row["mean"] == 100 * row["offset"]
         assert row["median"] == 100 * row["offset"]
+        # Both events are identical at every offset, so the mean has zero
+        # spread -- stderr degenerates to 0 and the CI collapses onto it.
+        assert row["stderr"] == 0
+        assert row["ci95_lower"] == row["ci95_upper"] == row["mean"]
 
 
 @mock_aws

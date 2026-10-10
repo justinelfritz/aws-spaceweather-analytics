@@ -39,6 +39,18 @@ def _get(path: str):
         return exc.code, json.loads(exc.read())
 
 
+def _post(path: str, body: dict = None):
+    data = json.dumps(body).encode("utf-8") if body is not None else b"{}"
+    request = urllib.request.Request(
+        f"{API_BASE_URL}{path}", data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
 def test_events_returns_the_catalog():
     status, body = _get("/events")
     assert status == 200
@@ -96,4 +108,38 @@ def test_forecast_skill_known_combination():
 
 def test_forecast_skill_rejects_unknown_error_type():
     status, _body = _get("/forecast-skill/kp/not_a_real_error_type")
+    assert status == 400
+
+
+# --- on-demand SEA (docs/sea-on-demand-design.md) ---
+
+def test_sea_post_without_event_ids_matches_the_precomputed_get():
+    get_status, get_body = _get("/sea/dst_index/raw")
+    post_status, post_body = _post("/sea/dst_index/raw", {})
+    assert get_status == post_status == 200
+    assert get_body == post_body
+
+
+def test_sea_post_computes_a_real_subset():
+    _, events_body = _get("/events?start=2024-05-01&end=2024-05-31")
+    gannon_storm = next(e for e in events_body["events"] if e["start_time"].startswith("2024-05-10"))
+
+    status, body = _post("/sea/dst_index/raw", {"event_ids": [gannon_storm["gst_id"]]})
+    assert status == 200
+    assert body["event_count"] == 1
+    # Sanity check against the same real, published event this project has
+    # validated elsewhere (min_dst ~-406nT, see space-weather-platform-todo.md
+    # section 5): the aggregate at offset 0 should equal that single storm's
+    # own onset-hour Dst reading exactly, since n=1 collapses mean == raw value.
+    onset_offset = next(row for row in body["offsets"] if row["offset"] == 0)
+    assert onset_offset["n"] == 1
+
+
+def test_sea_post_rejects_empty_event_ids():
+    status, _body = _post("/sea/dst_index/raw", {"event_ids": []})
+    assert status == 400
+
+
+def test_sea_post_rejects_unknown_event_id():
+    status, _body = _post("/sea/dst_index/raw", {"event_ids": ["not-a-real-gst-id"]})
     assert status == 400

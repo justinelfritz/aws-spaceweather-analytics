@@ -1,2 +1,16 @@
 pytest==8.4.2
 moto[s3]==5.1.13
+# matplotlib and sea_lib are only used by local-only scripts (eda.py,
+# plot_forecast_skill.py) and forecast_skill.py (imported by
+# tests/test_forecast_skill.py, and run locally/manually -- see
+# docs/api-reference.md's /forecast-skill endpoint) -- never by data.py/
+# features.py/train.py, the only files ml/Dockerfile copies into the
+# SageMaker training image. requirements.txt has to stay limited to what
+# that image actually needs: Docker's build context is just ml/, so a
+# relative path like sea_lib's wheel below (outside ml/) can't resolve
+# inside it -- confirmed the hard way, this broke the image build while
+# sea_lib was listed in requirements.txt instead of here.
+matplotlib==3.9.2
+# Reuses SEA's event-alignment/aggregation code for the forecast-skill
+# backtest (ml/forecast_skill.py) -- rebuild via: cd ../sea && pip wheel --no-deps -w dist/ .
+../sea/dist/sea_lib-0.1.0-py3-none-any.whl
