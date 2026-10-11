@@ -52,6 +52,7 @@ export function fetchSeaResult(field, normalization, eventIds = null) {
   return request(`/sea/${field}/${normalization}`, { method: "POST", body: { event_ids: eventIds } });
 }
 
-export function fetchForecastSkill(target, errorType) {
-  return request(`/forecast-skill/${target}/${errorType}`);
+export function fetchForecastSkill(target, errorType, severity) {
+  const query = severity ? `?severity=${encodeURIComponent(severity)}` : "";
+  return request(`/forecast-skill/${target}/${errorType}${query}`);
 }

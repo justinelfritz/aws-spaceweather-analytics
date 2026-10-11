@@ -88,6 +88,114 @@ def test_forecast_skill_handler_rejects_unknown_error_type():
     assert result["statusCode"] == 400
 
 
+@mock_aws
+def test_forecast_skill_handler_accepts_severity_query_param(monkeypatch):
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=BUCKET)
+    monkeypatch.setenv("CURATED_BUCKET_NAME", BUCKET)
+    monkeypatch.setattr(forecast_skill_handler, "s3", s3)
+
+    payload = {"target": "kp", "error_type": "abs_error", "severity": "minor", "offsets": []}
+    s3.put_object(
+        Bucket=BUCKET,
+        Key="curated/ml_forecast_skill/kp/abs_error/minor.json",
+        Body=json.dumps(payload).encode("utf-8"),
+    )
+
+    result = forecast_skill_handler.handler(
+        {
+            "pathParameters": {"target": "kp", "error_type": "abs_error"},
+            "queryStringParameters": {"severity": "minor"},
+        },
+        None,
+    )
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"]) == payload
+
+
+@mock_aws
+def test_forecast_skill_handler_omitting_severity_uses_unfiltered_key(monkeypatch):
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=BUCKET)
+    monkeypatch.setenv("CURATED_BUCKET_NAME", BUCKET)
+    monkeypatch.setattr(forecast_skill_handler, "s3", s3)
+
+    payload = {"target": "kp", "error_type": "abs_error", "severity": None, "offsets": []}
+    s3.put_object(
+        Bucket=BUCKET,
+        Key="curated/ml_forecast_skill/kp/abs_error.json",
+        Body=json.dumps(payload).encode("utf-8"),
+    )
+
+    result = forecast_skill_handler.handler(
+        {"pathParameters": {"target": "kp", "error_type": "abs_error"}}, None
+    )
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"]) == payload
+
+
+def test_forecast_skill_handler_rejects_unknown_severity():
+    result = forecast_skill_handler.handler(
+        {
+            "pathParameters": {"target": "kp", "error_type": "abs_error"},
+            "queryStringParameters": {"severity": "bogus"},
+        },
+        None,
+    )
+    assert result["statusCode"] == 400
+
+
+@mock_aws
+def test_forecast_skill_handler_accepts_classification_error_type(monkeypatch):
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=BUCKET)
+    monkeypatch.setenv("CURATED_BUCKET_NAME", BUCKET)
+    monkeypatch.setattr(forecast_skill_handler, "s3", s3)
+
+    payload = {"target": "kp", "threshold": 5.0, "precision": 0.9}
+    s3.put_object(
+        Bucket=BUCKET,
+        Key="curated/ml_classification_skill/kp.json",
+        Body=json.dumps(payload).encode("utf-8"),
+    )
+
+    result = forecast_skill_handler.handler(
+        {"pathParameters": {"target": "kp", "error_type": "classification"}}, None
+    )
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"]) == payload
+
+
+def test_forecast_skill_handler_rejects_severity_with_classification():
+    result = forecast_skill_handler.handler(
+        {
+            "pathParameters": {"target": "kp", "error_type": "classification"},
+            "queryStringParameters": {"severity": "minor"},
+        },
+        None,
+    )
+    assert result["statusCode"] == 400
+
+
+@mock_aws
+def test_forecast_skill_handler_accepts_ae_index_target(monkeypatch):
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=BUCKET)
+    monkeypatch.setenv("CURATED_BUCKET_NAME", BUCKET)
+    monkeypatch.setattr(forecast_skill_handler, "s3", s3)
+
+    s3.put_object(
+        Bucket=BUCKET,
+        Key="curated/ml_forecast_skill/ae_index/abs_error.json",
+        Body=json.dumps({"target": "ae_index"}).encode("utf-8"),
+    )
+
+    result = forecast_skill_handler.handler(
+        {"pathParameters": {"target": "ae_index", "error_type": "abs_error"}}, None
+    )
+    assert result["statusCode"] == 200
+
+
 # --- on-demand SEA (POST /sea/{field}/{normalization}) ---
 # See docs/sea-on-demand-design.md. A caller-chosen subset of the DONKI
 # catalog is computed synchronously; omitting event_ids (or selecting every

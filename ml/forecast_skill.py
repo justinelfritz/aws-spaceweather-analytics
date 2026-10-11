@@ -46,7 +46,19 @@ DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models"
 DEFAULT_HOURS_BEFORE = 24
 DEFAULT_HOURS_AFTER = 72
 DEFAULT_HORIZON_HOURS = 3
-TARGETS = [("kp", "kp_target"), ("dst_index", "dst_target")]
+TARGETS = [("kp", "kp_target"), ("dst_index", "dst_target"), ("ae_index", "ae_target")]
+
+# Grouped rather than one bucket per G-class: in the 2021-2025 test period
+# individual classes run as low as G1:1 and G5:3 storms -- too few to
+# backtest meaningfully. These three bands (NOAA's own G-scale grouping)
+# are the coarsest split that still separates practically-distinct
+# severity tiers while keeping every bucket's n in double digits
+# (minor=43, strong=20, severe=12 in that same test period).
+SEVERITY_BANDS = {
+    "minor": {"G1", "G2"},
+    "strong": {"G3"},
+    "severe": {"G4", "G5"},
+}
 
 
 def parse_args():
@@ -104,43 +116,57 @@ def error_series(predictions: pd.DataFrame, column: str, absolute: bool) -> dict
 def run_backtest(s3, args, predictions: pd.DataFrame) -> dict:
     min_start = datetime(args.test_start_year, 1, 1, tzinfo=timezone.utc)
     max_start = datetime(args.test_end_year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-    events = load_event_catalog(s3, args.curated_bucket, min_start_time=min_start, max_start_time=max_start)
-    print(f"Backtesting against {len(events)} held-out storms ({args.test_start_year}-{args.test_end_year})")
     model_version = load_model_version(args.model_dir)
 
     results = {}
-    for target_name, _target_column in TARGETS:
-        for error_type, absolute in [("signed_error", False), ("abs_error", True)]:
-            series = error_series(predictions, f"{target_name}_error", absolute=absolute)
-            offsets, aligned = align_events(series, events, hours_before=args.hours_before, hours_after=args.hours_after)
-            normalized = [normalize_raw(offsets, event) for event in aligned]
-            aggregated = aggregate_events(offsets, normalized)
+    # None first = today's unfiltered pass (unchanged output/key), then one
+    # pass per severity band -- see SEVERITY_BANDS above.
+    for severity, storm_classes in {None: None, **SEVERITY_BANDS}.items():
+        events = load_event_catalog(
+            s3,
+            args.curated_bucket,
+            min_start_time=min_start,
+            max_start_time=max_start,
+            storm_classes=storm_classes,
+        )
+        label = severity or "all storms"
+        print(f"Backtesting against {len(events)} held-out storms ({label}, {args.test_start_year}-{args.test_end_year})")
 
-            results[(target_name, error_type)] = {
-                "target": target_name,
-                "error_type": error_type,
-                "horizon_hours": args.horizon_hours,
-                "hours_before": args.hours_before,
-                "hours_after": args.hours_after,
-                "event_count": len(events),
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "model_version": model_version,
-                "offsets": [
-                    {
-                        "offset": row.offset,
-                        "n": row.n,
-                        "mean": row.mean,
-                        "median": row.median,
-                        "percentiles": {str(pct): value for pct, value in row.percentiles.items()},
-                    }
-                    for row in aggregated
-                ],
-            }
+        for target_name, _target_column in TARGETS:
+            for error_type, absolute in [("signed_error", False), ("abs_error", True)]:
+                series = error_series(predictions, f"{target_name}_error", absolute=absolute)
+                offsets, aligned = align_events(series, events, hours_before=args.hours_before, hours_after=args.hours_after)
+                normalized = [normalize_raw(offsets, event) for event in aligned]
+                aggregated = aggregate_events(offsets, normalized)
+
+                results[(target_name, error_type, severity)] = {
+                    "target": target_name,
+                    "error_type": error_type,
+                    "severity": severity,
+                    "horizon_hours": args.horizon_hours,
+                    "hours_before": args.hours_before,
+                    "hours_after": args.hours_after,
+                    "event_count": len(events),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "model_version": model_version,
+                    "offsets": [
+                        {
+                            "offset": row.offset,
+                            "n": row.n,
+                            "mean": row.mean,
+                            "median": row.median,
+                            "percentiles": {str(pct): value for pct, value in row.percentiles.items()},
+                        }
+                        for row in aggregated
+                    ],
+                }
     return results
 
 
-def result_key(target: str, error_type: str) -> str:
-    return f"curated/ml_forecast_skill/{target}/{error_type}.json"
+def result_key(target: str, error_type: str, severity: str = None) -> str:
+    if severity is None:
+        return f"curated/ml_forecast_skill/{target}/{error_type}.json"
+    return f"curated/ml_forecast_skill/{target}/{error_type}/{severity}.json"
 
 
 def main():
@@ -151,8 +177,8 @@ def main():
     print(f"Held-out predictions: {len(predictions):,} rows ({args.test_start_year}-{args.test_end_year})")
 
     results = run_backtest(s3, args, predictions)
-    for (target_name, error_type), result in results.items():
-        key = result_key(target_name, error_type)
+    for (target_name, error_type, severity), result in results.items():
+        key = result_key(target_name, error_type, severity)
         s3.put_object(
             Bucket=args.curated_bucket,
             Key=key,
@@ -160,8 +186,9 @@ def main():
             ContentType="application/json",
         )
         onset_row = next(row for row in result["offsets"] if row["offset"] == 0)
+        label = f"{target_name}/{error_type}" + (f"/{severity}" if severity else "")
         print(
-            f"{target_name}/{error_type}: onset (offset=0) mean={onset_row['mean']:.3f} n={onset_row['n']} "
+            f"{label}: onset (offset=0) mean={onset_row['mean']:.3f} n={onset_row['n']} "
             f"-> s3://{args.curated_bucket}/{key}"
         )
 

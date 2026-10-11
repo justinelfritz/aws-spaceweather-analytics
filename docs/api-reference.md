@@ -212,40 +212,99 @@ full catalog.
 
 ## `GET /forecast-skill/{target}/{error_type}`
 
-Precomputed forecast-skill backtest result (`ml/forecast_skill.py`): the
-Kp(t+3h)/Dst(t+3h) model's prediction error, aligned on the same storm
-catalog SEA uses, restricted to the held-out test period. See
-`ml/forecast_skill/findings.md` for the headline result this powers.
+Precomputed forecast-skill backtest result (`ml/forecast_skill.py`,
+`ml/classification_skill.py`): the Kp(t+3h)/Dst(t+3h)/AE(t+3h) model's
+prediction error, aligned on the same storm catalog SEA uses, restricted
+to the held-out test period. See `ml/forecast_skill/findings.md` for the
+headline result this powers.
 
 **Path parameters**
 
 | param | valid values |
 |---|---|
-| `target` | `kp`, `dst_index` |
-| `error_type` | `signed_error`, `abs_error` |
+| `target` | `kp`, `dst_index`, `ae_index` |
+| `error_type` | `signed_error`, `abs_error`, `classification` |
+
+**Query parameters**
+
+| param | valid values | default |
+|---|---|---|
+| `severity` | `minor` (G1–G2), `strong` (G3), `severe` (G4–G5) | omitted = unfiltered, every storm in the test period |
+
+Restricts the `signed_error`/`abs_error` backtest to storms of the given
+class band instead of the full catalog — e.g. "is the model specifically
+worse right around severe storms?" Grouped into 3 bands rather than one
+per G-class: individual classes run as few as 1–3 storms in the 2021-2025
+test period, too small to backtest meaningfully on their own. **Not valid
+with `error_type=classification`** (400) — that result is a single
+whole-test-period summary, not aligned on storm onset, so a severity band
+doesn't apply to it (see below).
 
 **Example**
 
 ```
-GET /forecast-skill/dst_index/abs_error
+GET /forecast-skill/dst_index/abs_error?severity=severe
 ```
 
 ```json
 {
   "target": "dst_index",
   "error_type": "abs_error",
+  "severity": "severe",
   "horizon_hours": 3,
   "hours_before": 24,
   "hours_after": 72,
-  "event_count": 75,
+  "event_count": 12,
   "generated_at": "2026-09-16T09:04:20+00:00",
   "model_version": {"git_commit": "a1b2c3d", "train_years": "1995-2020"},
   "offsets": [
-    {"offset": 0, "n": 69, "mean": 20.933, "median": 18.5, "percentiles": {"25": 10.0, "75": 27.0}},
+    {"offset": 0, "n": 11, "mean": 20.933, "median": 18.5, "percentiles": {"25": 10.0, "75": 27.0}},
     ...
   ]
 }
 ```
+
+`severity` is `null` and `event_count` reflects the full test-period
+catalog when the query parameter is omitted — identical to this
+endpoint's behavior before `severity` existed.
+
+### `error_type=classification`
+
+Thresholds the model's existing regression predictions into a storm/
+no-storm call and scores it as a confusion matrix — not a separately
+trained classifier (`space-weather-platform-todo.md` section 6 flagged
+this as "available for free" this way). Only valid for `target=kp` or
+`target=dst_index` (`ae_index` has no established storm threshold — 400
+otherwise). Computed pointwise over every hourly prediction in the held-out
+test period, not epoch-aligned, so the response has no `offsets` array.
+
+```
+GET /forecast-skill/dst_index/classification
+```
+
+```json
+{
+  "target": "dst_index",
+  "threshold": -50.0,
+  "storm_definition": "dst_index <= -50.0",
+  "horizon_hours": 3,
+  "row_count": 35064,
+  "positive_rate_actual": 0.071,
+  "positive_rate_predicted": 0.065,
+  "generated_at": "2026-10-10T12:00:00+00:00",
+  "model_version": {"git_commit": "a1b2c3d", "train_years": [1995, 2020]},
+  "confusion_matrix": {"tp": 2050, "fp": 180, "tn": 32400, "fn": 434},
+  "precision": 0.919,
+  "recall": 0.825,
+  "f1": 0.870,
+  "false_alarm_rate": 0.0055
+}
+```
+
+`kp`'s storm definition is `kp >= 5.0` (NOAA's own G1 threshold);
+`dst_index`'s is `dst_index <= -50.0` (a standard literature moderate-storm
+cutoff, Gonzalez et al. 1994) — both are CLI-overridable in
+`ml/classification_skill.py`, not fixed at the API layer.
 
 ---
 

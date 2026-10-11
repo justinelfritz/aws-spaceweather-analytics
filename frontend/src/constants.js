@@ -80,12 +80,29 @@ export const NORMALIZATION_LABELS = {
   normalized_amplitude: "Normalized Amplitude (Z-Score)",
 };
 
-export const FORECAST_TARGETS = ["kp", "dst_index"];
+export const FORECAST_TARGETS = ["kp", "dst_index", "ae_index"];
 
-export const ERROR_TYPES = ["signed_error", "abs_error"];
+export const ERROR_TYPES = ["signed_error", "abs_error", "classification"];
 
 // Plain-language labels for the forecast-skill error types.
 export const ERROR_TYPE_LABELS = {
   signed_error: "Signed Error",
   abs_error: "Absolute Error",
+  classification: "Storm Classification Skill",
+};
+
+// classification thresholds a continuous prediction into a storm/no-storm
+// call (see ml/classification_skill.py) -- no established threshold exists
+// for ae_index, so it's excluded here even though it's a valid FORECAST_TARGET.
+export const CLASSIFICATION_TARGETS = ["kp", "dst_index"];
+
+// ml/forecast_skill.py's SEVERITY_BANDS -- restricts the backtest to a
+// storm-class band instead of the full catalog. Not valid alongside
+// error_type=classification (see ForecastSkillView.jsx).
+export const SEVERITY_BANDS = ["minor", "strong", "severe"];
+
+export const SEVERITY_BAND_LABELS = {
+  minor: "Minor (G1–G2)",
+  strong: "Strong (G3)",
+  severe: "Severe (G4–G5)",
 };

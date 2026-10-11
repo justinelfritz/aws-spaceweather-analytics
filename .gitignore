@@ -39,6 +39,10 @@ npm-debug.log*
 .env.*
 !.env.example
 
+# Claude Code -- isolated subagent worktrees (Agent tool's isolation:
+# "worktree" option), ephemeral scratch space, never meant to be committed
+.claude/worktrees/
+
 # Editors / OS
 .vscode/
 .idea/

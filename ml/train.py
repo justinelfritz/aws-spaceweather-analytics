@@ -60,7 +60,11 @@ def persistence_predictions(table: pd.DataFrame) -> dict[str, np.ndarray]:
     the horizon. `kp`/`dst_index` are the *current* (time t) columns --
     still present in the feature table alongside the future `*_target`
     columns build_feature_table adds."""
-    return {"kp": table["kp"].to_numpy(), "dst_index": table["dst_index"].to_numpy()}
+    return {
+        "kp": table["kp"].to_numpy(),
+        "dst_index": table["dst_index"].to_numpy(),
+        "ae_index": table["ae_index"].to_numpy(),
+    }
 
 
 def evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
@@ -76,7 +80,7 @@ def train_and_evaluate(train_table: pd.DataFrame, test_table: pd.DataFrame, feat
 
     results = {}
     models = {}
-    for target_name, target_column in [("kp", "kp_target"), ("dst_index", "dst_target")]:
+    for target_name, target_column in [("kp", "kp_target"), ("dst_index", "dst_target"), ("ae_index", "ae_target")]:
         baseline_pred = persistence_predictions(test_table)[target_name]
         baseline_metrics = evaluate(test_table[target_column].to_numpy(), baseline_pred)
 
