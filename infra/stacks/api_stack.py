@@ -116,6 +116,15 @@ class ApiStack(Stack):
             timeout=Duration.seconds(29),
             memory_size=1024,
             environment=common_env,
+            # Cost cap, not a performance knob: at the API's existing 10rps
+            # stage throttle, a worst-case-duration bot run against this
+            # function would cost real money within an hour (nothing before
+            # this reserved a concurrency slot per invocation, so request
+            # rate alone bounded nothing). 3 concurrent executions caps
+            # worst-case spend by roughly two orders of magnitude while
+            # comfortably covering this demo's realistic simultaneous
+            # traffic (a handful of visitors, not more).
+            reserved_concurrent_executions=3,
         )
 
         events_fn = lambda_.Function(
@@ -144,6 +153,13 @@ class ApiStack(Stack):
             timeout=Duration.seconds(29),
             memory_size=1024,
             environment=common_env,
+            # Same cost-cap reasoning as historical_fn, tighter here since
+            # this is the most expensive endpoint (on-demand SEA compute,
+            # not a single S3 read) -- 2 concurrent executions caps
+            # worst-case sustained-abuse spend from ~$17/hour (10rps x
+            # worst-case 29s runs, unbounded by anything before this) down
+            # to a small fraction of that.
+            reserved_concurrent_executions=2,
         )
 
         forecast_skill_results_fn = lambda_.Function(
