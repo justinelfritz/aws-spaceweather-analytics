@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from moto import mock_aws
 
-from forecast_skill import build_test_predictions, error_series, result_key, run_backtest
+from forecast_skill import SEVERITY_BANDS, build_test_predictions, error_series, result_key, run_backtest
 
 BUCKET = "curated-test"
 BASE_DATE = datetime(2021, 6, 1, tzinfo=timezone.utc)
@@ -17,6 +17,9 @@ HORIZON = 3
 HOURS_BEFORE = 2
 HOURS_AFTER = 2
 EVENT_ANCHORS = [40, 70]
+# One minor, one severe -- no "strong" (G3) event -- enough to confirm
+# severity partitioning without needing a 3rd synthetic storm.
+EVENT_CLASSES = ["G1", "G4"]
 
 
 class ConstantPredictor:
@@ -39,15 +42,21 @@ def _dst_signature(offset: int) -> float:
     return 50.0 * offset
 
 
+def _ae_signature(offset: int) -> float:
+    return 5.0 * offset
+
+
 def _write_synthetic_data(s3):
     timestamps = [BASE_DATE + timedelta(hours=h) for h in range(N_HOURS)]
     kp = [0.0] * N_HOURS
     dst_index = [0.0] * N_HOURS
+    ae_index = [0.0] * N_HOURS
     for anchor in EVENT_ANCHORS:
         for offset in range(-HOURS_BEFORE, HOURS_AFTER + 1):
             target_hour = anchor + offset + HORIZON
             kp[target_hour] = _kp_signature(offset)
             dst_index[target_hour] = _dst_signature(offset)
+            ae_index[target_hour] = _ae_signature(offset)
 
     table = pa.table(
         {
@@ -59,7 +68,7 @@ def _write_synthetic_data(s3):
             "by_gsm": [1.0] * N_HOURS,
             "kp": kp,
             "dst_index": dst_index,
-            "ae_index": [1.0] * N_HOURS,
+            "ae_index": ae_index,
         }
     )
     import io
@@ -69,8 +78,12 @@ def _write_synthetic_data(s3):
     s3.put_object(Bucket=BUCKET, Key="curated/omniweb_omni2_hourly/year=2021/data.parquet", Body=buffer.getvalue())
 
     catalog = [
-        {"gst_id": f"evt-{i}", "start_time": (BASE_DATE + timedelta(hours=anchor)).isoformat()}
-        for i, anchor in enumerate(EVENT_ANCHORS)
+        {
+            "gst_id": f"evt-{i}",
+            "start_time": (BASE_DATE + timedelta(hours=anchor)).isoformat(),
+            "storm_class": storm_class,
+        }
+        for i, (anchor, storm_class) in enumerate(zip(EVENT_ANCHORS, EVENT_CLASSES))
     ]
     s3.put_object(
         Bucket=BUCKET,
@@ -82,6 +95,11 @@ def _write_synthetic_data(s3):
 def test_result_key_is_namespaced_by_target_and_error_type():
     assert result_key("kp", "signed_error") == "curated/ml_forecast_skill/kp/signed_error.json"
     assert result_key("dst_index", "abs_error") == "curated/ml_forecast_skill/dst_index/abs_error.json"
+
+
+def test_result_key_with_severity_nests_under_the_unfiltered_key():
+    assert result_key("kp", "abs_error", "minor") == "curated/ml_forecast_skill/kp/abs_error/minor.json"
+    assert result_key("kp", "abs_error", None) == "curated/ml_forecast_skill/kp/abs_error.json"
 
 
 def test_error_series_signed_and_absolute():
@@ -102,9 +120,10 @@ def test_run_backtest_matches_hand_computed_offset_pattern(tmp_path):
     s3.create_bucket(Bucket=BUCKET)
     _write_synthetic_data(s3)
 
-    kp_constant, dst_constant = 5.0, 20.0
+    kp_constant, dst_constant, ae_constant = 5.0, 20.0, 2.0
     joblib.dump(ConstantPredictor(kp_constant), tmp_path / "kp_gradient_boosting.joblib")
     joblib.dump(ConstantPredictor(dst_constant), tmp_path / "dst_index_gradient_boosting.joblib")
+    joblib.dump(ConstantPredictor(ae_constant), tmp_path / "ae_index_gradient_boosting.joblib")
 
     args = Namespace(
         curated_bucket=BUCKET,
@@ -119,11 +138,13 @@ def test_run_backtest_matches_hand_computed_offset_pattern(tmp_path):
     predictions = build_test_predictions(s3, args)
     results = run_backtest(s3, args, predictions)
 
-    kp_signed = results[("kp", "signed_error")]
-    kp_abs = results[("kp", "abs_error")]
-    dst_signed = results[("dst_index", "signed_error")]
+    kp_signed = results[("kp", "signed_error", None)]
+    kp_abs = results[("kp", "abs_error", None)]
+    dst_signed = results[("dst_index", "signed_error", None)]
+    ae_signed = results[("ae_index", "signed_error", None)]
 
     assert kp_signed["event_count"] == 2
+    assert kp_signed["severity"] is None
     assert [row["offset"] for row in kp_signed["offsets"]] == [-2, -1, 0, 1, 2]
 
     # Both events share the identical relative signature, so every offset
@@ -139,3 +160,52 @@ def test_run_backtest_matches_hand_computed_offset_pattern(tmp_path):
 
     for row in dst_signed["offsets"]:
         assert row["mean"] == dst_constant - _dst_signature(row["offset"])
+
+    for row in ae_signed["offsets"]:
+        assert row["mean"] == ae_constant - _ae_signature(row["offset"])
+
+
+@mock_aws
+def test_run_backtest_severity_bands_partition_events_correctly(tmp_path):
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket=BUCKET)
+    _write_synthetic_data(s3)
+
+    kp_constant = 5.0
+    joblib.dump(ConstantPredictor(kp_constant), tmp_path / "kp_gradient_boosting.joblib")
+    joblib.dump(ConstantPredictor(20.0), tmp_path / "dst_index_gradient_boosting.joblib")
+    joblib.dump(ConstantPredictor(2.0), tmp_path / "ae_index_gradient_boosting.joblib")
+
+    args = Namespace(
+        curated_bucket=BUCKET,
+        model_dir=tmp_path,
+        horizon_hours=HORIZON,
+        test_start_year=2021,
+        test_end_year=2021,
+        hours_before=HOURS_BEFORE,
+        hours_after=HOURS_AFTER,
+    )
+
+    predictions = build_test_predictions(s3, args)
+    results = run_backtest(s3, args, predictions)
+
+    unfiltered = results[("kp", "signed_error", None)]
+    minor = results[("kp", "signed_error", "minor")]
+    strong = results[("kp", "signed_error", "strong")]
+    severe = results[("kp", "signed_error", "severe")]
+
+    assert set(SEVERITY_BANDS) == {"minor", "strong", "severe"}
+    # The synthetic catalog has one G1 (-> minor) and one G4 (-> severe)
+    # event, no G3 (-> strong), so the bands should partition the
+    # unfiltered 2-event total exactly, with "strong" empty.
+    assert minor["event_count"] + strong["event_count"] + severe["event_count"] == unfiltered["event_count"]
+    assert minor["event_count"] == 1
+    assert strong["event_count"] == 0
+    assert severe["event_count"] == 1
+
+    # "minor"'s single event (evt-0, anchor=40) is the only contributor --
+    # its onset-offset mean should equal the hand-computed single-event
+    # error exactly (n=1 collapses mean to the raw value).
+    minor_onset = next(row for row in minor["offsets"] if row["offset"] == 0)
+    assert minor_onset["n"] == 1
+    assert minor_onset["mean"] == kp_constant - _kp_signature(0)

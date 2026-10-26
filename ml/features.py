@@ -100,6 +100,7 @@ def add_targets(df: pd.DataFrame, horizon_hours: int) -> pd.DataFrame:
     df = df.copy()
     df["kp_target"] = df["kp"].shift(-horizon_hours)
     df["dst_target"] = df["dst_index"].shift(-horizon_hours)
+    df["ae_target"] = df["ae_index"].shift(-horizon_hours)
     return df
 
 
@@ -124,5 +125,5 @@ def build_feature_table(
     df = add_rolling_features(df, feature_columns, rolling_windows)
     df = add_targets(df, horizon_hours)
 
-    required = feature_column_names(lags, rolling_windows) + ["kp_target", "dst_target"]
+    required = feature_column_names(lags, rolling_windows) + ["kp_target", "dst_target", "ae_target"]
     return df.dropna(subset=required).reset_index(drop=True)

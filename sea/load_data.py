@@ -25,7 +25,13 @@ from alignment import Event
 FIELD_COLUMN = {"bx_gsm": "bx_gse_gsm", "bx_gse": "bx_gse_gsm"}
 
 
-def load_event_catalog(s3, curated_bucket: str, min_start_time: datetime = None, max_start_time: datetime = None) -> list:
+def load_event_catalog(
+    s3,
+    curated_bucket: str,
+    min_start_time: datetime = None,
+    max_start_time: datetime = None,
+    storm_classes: set = None,
+) -> list:
     obj = s3.get_object(Bucket=curated_bucket, Key="curated/event_catalog/geomagnetic_storms.json")
     catalog = json.loads(obj["Body"].read())
 
@@ -35,6 +41,11 @@ def load_event_catalog(s3, curated_bucket: str, min_start_time: datetime = None,
         if min_start_time and start_time < min_start_time:
             continue
         if max_start_time and start_time > max_start_time:
+            continue
+        # Filtered here, on the raw catalog dict, rather than carried onto
+        # Event -- Event is deliberately source-agnostic (see alignment.py's
+        # docstring), so storm_class never belongs on it.
+        if storm_classes is not None and entry.get("storm_class") not in storm_classes:
             continue
         events.append(Event(event_id=entry["gst_id"], time=start_time))
     return events
